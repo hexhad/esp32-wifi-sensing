@@ -27,7 +27,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font);
          -webkit-font-smoothing: antialiased; }
-  .wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  .wrap { max-width: 2400px; margin: 0 auto; padding: 20px clamp(16px, 2vw, 32px) 48px; display: grid; gap: 16px; }
 
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 2px; }
   h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
@@ -64,7 +64,7 @@
   .kpi .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
 
   /* Main grid */
-  .main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; }
+  .main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 400px); gap: 16px; }
   .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
   @media (max-width: 900px) { .main, .pair { grid-template-columns: 1fr; } }
 
