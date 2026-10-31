@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WiFi Sensing</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1012; --surface: #17181b; --surface-2: #1e2024; --line: #2a2c31;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #94938b; --grid: #25272c;
+    --accent: #3987e5; --accent-soft: rgba(57, 135, 229, .16); --on-accent: #ffffff;
+    --warn: #c98500; --bad: #e66767;
+    --radius: 12px; --radius-sm: 8px;
+    --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg: #f4f4f2; --surface: #fcfcfb; --surface-2: #f0efec; --line: #e2e1dc;
+      --text: #0b0b0b; --text-2: #52514e; --muted: #6b6a64; --grid: #ecebe7;
+      --accent: #2a78d6; --accent-soft: rgba(42, 120, 214, .12);
+      --warn: #9a6600; --bad: #c43c3b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font);
+         -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 2px; }
+  h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+          background: var(--surface); border: 1px solid var(--line); color: var(--text-2); font-size: 13px; }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .pill.ok i { background: #1baf7a; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0 0 14px; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .card-head h2 { margin: 0; }
+  .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  /* KPI row */
+  .kpis { display: grid; grid-template-columns: 2fr repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, 1fr); } .hero { grid-column: 1 / -1; } }
+  @media (max-width: 520px) { .kpis { grid-template-columns: 1fr; } }
+  .hero { display: flex; align-items: center; gap: 18px; }
+  .orb { width: 56px; height: 56px; border-radius: 50%; flex: none; position: relative;
+         background: var(--surface-2); border: 1px solid var(--line); transition: background .3s, border-color .3s; }
+  .orb.moving { background: var(--accent); border-color: var(--accent); }
+  .orb.still { background: var(--accent-soft); border-color: var(--accent); }
+  .orb.moving::after { content: ""; position: absolute; inset: -7px; border-radius: 50%;
+                       border: 2px solid var(--accent); animation: ring 1.4s ease-out infinite; }
+  @keyframes ring { from { transform: scale(.85); opacity: .9; } to { transform: scale(1.3); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .orb.moving::after { animation: none; opacity: .5; } }
+  .state { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; }
+  .sub { color: var(--text-2); font-size: 13px; margin-top: 3px; }
+  .kpi { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+  .kpi span { color: var(--text-2); font-size: 13px; }
+  .kpi b { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .kpi small { color: var(--muted); font-size: 12px; font-weight: 500; margin-left: 4px; letter-spacing: 0; }
+  .kpi .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+
+  /* Main grid */
+  .main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; }
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .main, .pair { grid-template-columns: 1fr; } }
+
+  .chart { position: relative; }
+  canvas { width: 100%; display: block; }
+  .tip { position: absolute; pointer-events: none; background: var(--surface-2); border: 1px solid var(--line);
+         border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12px; white-space: nowrap; color: var(--text);
+         box-shadow: 0 6px 20px rgba(0, 0, 0, .25); opacity: 0; transition: opacity .12s; z-index: 1; }
+  .tip.on { opacity: 1; }
+  .tip b { font-variant-numeric: tabular-nums; }
+  .tip .k { color: var(--muted); }
+  .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px;
+           text-align: center; padding: 16px; }
+  .empty[hidden] { display: none; }
+
+  /* Controls */
+  form { display: grid; gap: 12px; }
+  .field { display: grid; gap: 6px; }
+  label { font-size: 13px; color: var(--text-2); }
+  input[type=text], input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text);
+          border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; }
+  input:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm);
+           padding: 9px 14px; font: inherit; font-weight: 600; cursor: pointer;
+           transition: background .15s, transform .1s; }
+  button:hover { background: var(--line); }
+  button:active { transform: scale(.98); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  button.primary:hover { filter: brightness(1.08); }
+  button.ghost { background: transparent; border-color: transparent; color: var(--text-2); padding: 4px 8px; font-size: 12px; }
+  button.ghost:hover { background: var(--surface-2); color: var(--text); }
+  button:disabled { opacity: .55; cursor: default; transform: none; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
+  .slider { display: grid; gap: 8px; }
+  .slider .top { display: flex; justify-content: space-between; }
+  .slider output { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; font-size: 13px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+  .note { color: var(--text-2); font-size: 13px; margin: 12px 0 0; min-height: 1.45em; }
+  .note.warn { color: var(--warn); }
+  .fine { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+
+  .usb { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .usb .lbl { display: block; font-size: 13px; color: var(--text-2); }
+  .usb .fine { margin: 2px 0 0; display: block; }
+  .now b { display: block; font-size: 26px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; }
+  .now .sub { display: block; margin-top: 4px; }
+  select { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text);
+           border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; }
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .train { display: grid; gap: 12px; }
+  .train .fine { margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips span { font-size: 12px; padding: 4px 9px; border-radius: var(--radius-sm); background: var(--surface-2);
+                border: 1px solid var(--line); color: var(--text-2); }
+  .chips span b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  details summary { cursor: pointer; color: var(--text-2); font-size: 13px; font-weight: 600; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: "+"; display: inline-block; width: 16px; color: var(--muted); }
+  details[open] summary::before { content: "-"; }
+  pre { margin: 12px 0 0; max-height: 220px; overflow: auto; font: 12px/1.55 var(--mono); color: var(--text-2);
+        white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Home WiFi Sensing</h1>
+    <div id="conn" class="pill" role="status"><i></i><span id="connText">Connecting to server</span></div>
+  </header>
+
+  <section class="kpis" aria-label="Live summary">
+    <div class="card hero">
+      <div id="orb" class="orb" aria-hidden="true"></div>
+      <div>
+        <div id="state" class="state" aria-live="polite">Waiting for board</div>
+        <div id="stateSub" class="sub">Connect the board to WiFi to start.</div>
+      </div>
+    </div>
+    <div class="card kpi">
+      <span>Events today</span>
+      <div class="row"><b id="evTotal">0</b><button type="button" id="resetCounts" class="ghost">Reset</button></div>
+    </div>
+    <div class="card kpi"><span>Last movement</span><b id="lastMove">None</b></div>
+    <div class="card kpi"><span>Signal strength</span><b id="rssi">-<small>dBm</small></b></div>
+    <div class="card kpi"><span>Data rate</span><b id="rate">0<small>/s</small></b></div>
+  </section>
+
+  <section class="main">
+    <div class="card">
+      <div class="card-head"><h2>Motion level</h2><span class="meta">Last 30 seconds</span></div>
+      <div class="chart" id="moveWrap">
+        <canvas id="moveChart" height="430" aria-label="Line chart of motion level against the movement threshold"></canvas>
+        <div id="moveTip" class="tip"></div>
+        <div id="moveEmpty" class="empty">No readings yet. They appear once the board is on WiFi.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Board</h2>
+      <form id="wifiForm" autocomplete="off">
+        <div class="field"><label for="ssid">WiFi name (2.4 GHz)</label><input id="ssid" type="text" required></div>
+        <div class="field"><label for="pass">Password</label><input id="pass" type="password"></div>
+        <div class="btns"><button class="primary" type="submit">Connect</button>
+          <button type="button" id="wifiOff">Disconnect WiFi</button></div>
+      </form>
+      <hr>
+      <div class="btns"><button type="button" id="calib">Calibrate</button></div>
+      <p class="fine">Stay still or leave the room for 30 seconds while it learns your room's normal signal.</p>
+      <hr>
+      <div class="slider">
+        <div class="top"><label for="sens">Sensitivity</label><output id="sensVal" for="sens">1.0×</output></div>
+        <input id="sens" type="range" min="0.4" max="2.5" step="0.1" value="1">
+        <div class="scale"><span>Fewer alerts</span><span>More alerts</span></div>
+      </div>
+      <hr>
+      <div class="usb">
+        <div><span class="lbl">USB port</span><span id="usbState" class="fine">In use by the dashboard</span></div>
+        <button type="button" id="usbBtn">Release</button>
+      </div>
+      <p id="note" class="note" aria-live="polite">Your password goes only to the board over USB.</p>
+    </div>
+  </section>
+
+  <section class="pair">
+    <div class="card">
+      <div class="card-head"><h2>What's happening</h2><span id="actMode" class="meta">Estimate</span></div>
+      <div class="now">
+        <b id="actName" aria-live="polite">Waiting for data</b>
+        <span id="actWhy" class="sub">Calibrate first, then move near the router to ESP32 line.</span>
+      </div>
+      <hr>
+      <div class="train">
+        <div class="field"><label for="actPick">Teach an activity</label>
+          <select id="actPick"></select></div>
+        <div class="btns"><button type="button" class="primary" id="actRec">Record 20 s</button>
+          <button type="button" id="actClear">Clear</button></div>
+        <p id="actHint" class="fine">Do the activity close to the line between the router and the ESP32 while it records. Record at least two activities.</p>
+        <div id="actChips" class="chips"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Activity over time</h2><span class="meta">Seconds of movement per minute, last hour</span></div>
+      <div class="chart" id="actWrap">
+        <canvas id="actChart" height="250" aria-label="Bar chart of seconds of movement per minute over the last hour"></canvas>
+        <div id="actTip" class="tip"></div>
+      </div>
+      <div class="axis"><span>60 min ago</span><span>30 min</span><span>Now</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Raw WiFi signal</h2><span class="meta">Each row is one frequency</span></div>
+    <div class="chart">
+      <canvas id="waterfall" height="150" aria-label="Heatmap of signal strength per frequency over time"></canvas>
+      <div id="wfEmpty" class="empty">Waiting for signal data.</div>
+    </div>
+    <div class="axis"><span>Older</span><span>Brighter = stronger signal</span><span>Now</span></div>
+  </section>
+
+  <section class="card">
+    <details><summary>Board console</summary><pre id="log"></pre></details>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const css = () => getComputedStyle(document.documentElement);
+
+function send(cmd) {
+  return fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd }) });
+}
+function note(text, warn) { $('note').textContent = text; $('note').classList.toggle('warn', !!warn); }
+
+// ---------- State ----------
+const N = 600;                         // ~30 s of motion scores at ~20/s
+const jitter = [], thresh = [], movingFlags = [];
+let limit = parseFloat(store.get('wsense.mlimit')) || 0;
+let sens = parseFloat(store.get('wsense.sens')) || 1;
+let lastMoveAt = 0, calibrating = false, calibSamples = null, csiCount = 0;
+const recent = [];
+function push(arr, v) { arr.push(v); if (arr.length > N) arr.shift(); }
+
+// ---------- Controls ----------
+$('wifiForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = s => '"' + s.replace(/"/g, '') + '"';
+  const cmd = 'wifi_config -s ' + q($('ssid').value) + ($('pass').value ? ' -p ' + q($('pass').value) : '');
+  send(cmd).then(r => note(r.ok ? 'Connecting… this takes a few seconds.' : 'Could not reach the board. Check the USB cable.', !r.ok));
+  $('pass').value = '';
+});
+
+$('wifiOff').addEventListener('click', () => {
+  send('wifi_config -d').then(r => note(r.ok ? 'Board disconnected from WiFi. It will stay off until you press Connect.'
+                                             : 'Could not reach the board.', !r.ok));
+});
+
+let usbAttached = true;
+function drawUsb() {
+  $('usbBtn').textContent = usbAttached ? 'Release' : 'Reconnect';
+  $('usbState').textContent = usbAttached ? 'In use by the dashboard' : 'Released. Safe to unplug or flash.';
+}
+$('usbBtn').addEventListener('click', () => {
+  const attach = !usbAttached;
+  fetch('/usb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ attach }) })
+    .then(r => {
+      if (!r.ok) return note('The server did not accept that. Is it running?', true);
+      usbAttached = attach; drawUsb();
+      note(attach ? 'Reconnecting… the board restarts, then rejoins WiFi on its own if you connected it this session.'
+                  : 'USB port released. The dashboard stops receiving data until you reconnect.');
+    });
+});
+
+$('sens').value = sens; $('sensVal').textContent = sens.toFixed(1) + '×';
+$('sens').addEventListener('input', e => {
+  sens = +e.target.value; $('sensVal').textContent = sens.toFixed(1) + '×'; store.set('wsense.sens', sens);
+});
+
+$('calib').addEventListener('click', async () => {
+  if (calibrating) return;
+  calibrating = true; $('calib').disabled = true; calibSamples = [];
+  setState('', 'Calibrating', 'Stay still or leave the room.');
+  for (let s = 30; s > 0; s--) { $('calib').textContent = `Calibrating ${s}s`; await new Promise(r => setTimeout(r, 1000)); }
+  const v = calibSamples.sort((a, b) => a - b); calibSamples = null;
+  if (v.length < 100) {
+    note('Not enough readings. Make sure the board is on WiFi, then try again.', true);
+  } else {
+    limit = Math.max(v[Math.floor(v.length * 0.97)] * 1.4, 1e-4);   // noise ceiling plus headroom
+    store.set('wsense.mlimit', limit);
+    note('Calibrated. Walk around to test, and adjust sensitivity if needed.');
+  }
+  calibrating = false; $('calib').disabled = false; $('calib').textContent = 'Recalibrate';
+});
+if (limit) $('calib').textContent = 'Recalibrate';
+
+// ---------- Counts & activity ----------
+const today = () => new Date().toDateString();
+let counts; try { counts = JSON.parse(store.get('wsense.counts') || 'null'); } catch { counts = null; }
+if (!counts || counts.date !== today() || typeof counts.link !== 'number') counts = { date: today(), link: 0 };
+let bins; try { bins = JSON.parse(store.get('wsense.bins') || '{}') || {}; } catch { bins = {}; }
+const minuteNow = () => Math.floor(Date.now() / 60000);
+
+function drawCount() { $('evTotal').textContent = counts.link; }
+function countEvent() {
+  if (counts.date !== today()) counts = { date: today(), link: 0 };
+  counts.link++; store.set('wsense.counts', JSON.stringify(counts)); drawCount();
+}
+$('resetCounts').addEventListener('click', () => {
+  counts = { date: today(), link: 0 }; store.set('wsense.counts', JSON.stringify(counts)); drawCount();
+});
+drawCount();
+
+// ---------- Status ----------
+function setState(kind, title, sub) {
+  $('orb').className = 'orb ' + kind;
+  $('state').textContent = title;
+  $('stateSub').textContent = sub;
+}
+
+// ---------- Canvas helpers ----------
+function setupCanvas(c) {
+  // Keep the CSS height fixed: writing c.height changes the attribute on Retina screens
+  const h = +(c.dataset.h ||= c.getAttribute('height'));
+  c.style.height = h + 'px';
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [ctx, w, h];
+}
+
+// ---------- Movement chart (line + threshold reference, hover crosshair) ----------
+let moveHover = null;
+const moveC = $('moveChart');
+moveC.addEventListener('pointermove', e => { const r = moveC.getBoundingClientRect(); moveHover = e.clientX - r.left; });
+moveC.addEventListener('pointerleave', () => { moveHover = null; $('moveTip').classList.remove('on'); });
+
+function drawMove() {
+  const [ctx, w, h] = setupCanvas(moveC), s = css();
+  const top = 12, bottom = h - 6, ph = bottom - top;
+  ctx.clearRect(0, 0, w, h);
+  $('moveEmpty').hidden = jitter.length > 0;
+  let max = 1e-6;
+  for (const v of jitter) if (v > max) max = v;
+  for (const v of thresh) if (v > max) max = v;
+  max *= 1.15;
+  const y = v => bottom - (v / max) * ph;
+  const x = i => w - (jitter.length - 1 - i) * (w / (N - 1));
+
+  ctx.strokeStyle = s.getPropertyValue('--grid'); ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) { const gy = Math.round(top + ph * i / 3) + .5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
+
+  // Shade spans where movement was detected
+  ctx.fillStyle = s.getPropertyValue('--accent-soft');
+  for (let i = 0; i < movingFlags.length; i++) {
+    if (!movingFlags[i]) continue;
+    let j = i; while (j + 1 < movingFlags.length && movingFlags[j + 1]) j++;   // one band per run
+    ctx.fillRect(x(i), top, Math.max(2, x(j) - x(i)), ph); i = j;
+  }
+
+  if (!jitter.length) return;
+  const thr = thresh[thresh.length - 1];
+  if (thr) {
+    ctx.strokeStyle = s.getPropertyValue('--text-2'); ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]);
+    ctx.beginPath(); thresh.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = s.getPropertyValue('--text-2'); ctx.font = '600 12px ' + s.getPropertyValue('--font');
+    ctx.textAlign = 'left'; ctx.fillText('Threshold', 6, Math.max(top + 12, y(thr) - 6));
+  }
+  ctx.strokeStyle = s.getPropertyValue('--accent'); ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  ctx.beginPath(); jitter.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))); ctx.stroke();
+
+  if (moveHover != null) {
+    const i = Math.max(0, Math.min(jitter.length - 1, Math.round(jitter.length - 1 - (w - moveHover) / (w / (N - 1)))));
+    const px = x(i), py = y(jitter[i]);
+    ctx.strokeStyle = s.getPropertyValue('--muted'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px + .5, top); ctx.lineTo(px + .5, bottom); ctx.stroke();
+    ctx.fillStyle = s.getPropertyValue('--surface'); ctx.strokeStyle = s.getPropertyValue('--accent'); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const secs = ((jitter.length - 1 - i) / 20).toFixed(1);
+    const tip = $('moveTip');
+    tip.innerHTML = `<span class="k">${secs}s ago</span><br>Motion <b>${jitter[i].toFixed(2)}</b>` +
+      (thresh[i] ? `<br>Threshold <b>${thresh[i].toFixed(2)}</b><br>${movingFlags[i] ? 'Moving' : 'Still'}` : '');
+    tip.classList.add('on');
+    const tw = tip.offsetWidth;
+    tip.style.left = Math.min(w - tw, Math.max(0, px + 12 - (px > w - tw - 20 ? tw + 24 : 0))) + 'px';
+    tip.style.top = '8px';
+  }
+}
+
+// ---------- Activity chart (bars, last 60 minutes) ----------
+let actHover = null;
+const actC = $('actChart');
+actC.addEventListener('pointermove', e => { const r = actC.getBoundingClientRect(); actHover = e.clientX - r.left; drawAct(); });
+actC.addEventListener('pointerleave', () => { actHover = null; $('actTip').classList.remove('on'); drawAct(); });
+
+function drawAct() {
+  const [ctx, w, h] = setupCanvas(actC), s = css();
+  const top = 6, bottom = h - 2, ph = bottom - top, n = 60, gap = 2;
+  const bw = (w - gap * (n - 1)) / n, now = minuteNow();
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = s.getPropertyValue('--grid'); ctx.lineWidth = 1;
+  for (let i = 0; i <= 2; i++) { const gy = Math.round(top + ph * i / 2) + .5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
+  let hi = -1;
+  if (actHover != null) hi = Math.max(0, Math.min(n - 1, Math.floor(actHover / (bw + gap))));
+  for (let i = 0; i < n; i++) {
+    const v = bins[now - (n - 1 - i)] || 0;
+    const bh = Math.max(v ? 3 : 0, (v / 60) * ph), bx = i * (bw + gap);
+    if (!bh) continue;
+    ctx.fillStyle = s.getPropertyValue('--accent');
+    ctx.globalAlpha = hi === -1 || hi === i ? 1 : .45;
+    const r = Math.min(4, bw / 2, bh);
+    ctx.beginPath();
+    ctx.moveTo(bx, bottom); ctx.lineTo(bx, bottom - bh + r);
+    ctx.quadraticCurveTo(bx, bottom - bh, bx + r, bottom - bh);
+    ctx.lineTo(bx + bw - r, bottom - bh); ctx.quadraticCurveTo(bx + bw, bottom - bh, bx + bw, bottom - bh + r);
+    ctx.lineTo(bx + bw, bottom); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const tip = $('actTip');
+  if (hi >= 0) {
+    const m = now - (n - 1 - hi), v = bins[m] || 0;
+    const t = new Date(m * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    tip.innerHTML = `<span class="k">${t}</span><br><b>${v}s</b> of movement`;
+    tip.classList.add('on');
+    const tw = tip.offsetWidth, cx = hi * (bw + gap) + bw / 2;
+    tip.style.left = Math.min(w - tw, Math.max(0, cx - tw / 2)) + 'px'; tip.style.top = '-6px';
+  }
+}
+
+// ---------- Raw signal heatmap (single-hue blue ramp) ----------
+const RAMP = ['#0d366b', '#104281', '#184f95', '#1c5cab', '#256abf', '#2a78d6', '#3987e5', '#5598e7', '#6da7ec', '#86b6ef', '#9ec5f4', '#b7d3f6', '#cde2fb'];
+const RAMP_RGB = RAMP.map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
+const lightMode = () => css().getPropertyValue('color-scheme').trim() === 'light';
+function rampColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  if (lightMode()) t = 1 - t;                       // light theme: near zero recedes to pale
+  const f = t * (RAMP_RGB.length - 1), i = Math.floor(f), k = f - i;
+  const a = RAMP_RGB[i], b = RAMP_RGB[Math.min(i + 1, RAMP_RGB.length - 1)];
+  return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * k)).join(',')})`;
+}
+const wf = $('waterfall');
+let wfMax = 30;
+function addColumn(amps) {
+  $('wfEmpty').hidden = true;
+  const [ctx, w, h] = setupCanvas(wf);
+  const dpr = window.devicePixelRatio || 1, colW = 3;
+  const img = ctx.getImageData(colW * dpr, 0, wf.width - colW * dpr, wf.height);
+  ctx.putImageData(img, 0, 0);
+  const peak = Math.max(...amps); wfMax = wfMax * 0.98 + peak * 0.02;
+  const rowH = h / amps.length;
+  amps.forEach((a, i) => {
+    ctx.fillStyle = rampColor(a / (wfMax || 1));
+    ctx.fillRect(w - colW, h - (i + 1) * rowH, colW, Math.ceil(rowH));
+  });
+}
+
+// ---------- Console ----------
+const logEl = $('log');
+function log(line) {
+  logEl.textContent += line + '\n';
+  if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ---------- Live data ----------
+const es = new EventSource('/events');
+es.addEventListener('status', e => {
+  const d = JSON.parse(e.data), ok = d.serial === 'connected';
+  $('conn').classList.toggle('ok', ok);
+  usbAttached = d.serial !== 'released'; drawUsb();
+  $('connText').textContent = ok ? 'Board connected'
+    : d.serial === 'released' ? 'USB released' : (d.error ? 'Board unplugged' : 'Waiting for board');
+});
+es.onerror = () => { $('conn').classList.remove('ok'); $('connText').textContent = 'Server stopped'; };
+
+// ---------- Motion from the raw signal (methods borrowed from RuView) ----------
+// 1. Hampel filter per frequency removes one-off spikes
+// 2. Each frame is divided by its average, cancelling the chip's automatic gain jumps
+// 3. Motion = median, across frequencies, of the frame-to-frame change over ~1 s.
+//    Frame-to-frame change ignores slow drift but reacts to a body moving through the signal.
+const SUB = 52, raw = [], diffs = [];
+let prevNorm = null;
+function motionScore(amps) {
+  const v = new Float32Array(SUB);
+  for (let i = 0; i < SUB; i++) v[i] = amps[Math.floor(i * amps.length / SUB)] || 0;
+  raw.push(v); if (raw.length > 7) raw.shift();
+  const clean = new Float32Array(SUB), col = new Array(raw.length), dev = new Array(raw.length);
+  let mean = 0;
+  for (let i = 0; i < SUB; i++) {
+    for (let k = 0; k < raw.length; k++) col[k] = raw[k][i];
+    col.sort((p, q) => p - q);
+    const med = col[col.length >> 1];
+    for (let k = 0; k < raw.length; k++) dev[k] = Math.abs(col[k] - med);
+    dev.sort((p, q) => p - q);
+    const mad = dev[dev.length >> 1] * 1.4826;
+    clean[i] = mad > 0 && Math.abs(v[i] - med) > 3 * mad ? med : v[i];
+    mean += clean[i];
+  }
+  mean /= SUB;
+  if (!mean) return null;
+  for (let i = 0; i < SUB; i++) clean[i] /= mean;
+  if (!prevNorm) { prevNorm = clean; return null; }
+  const d = new Float32Array(SUB);
+  for (let i = 0; i < SUB; i++) d[i] = clean[i] - prevNorm[i];
+  prevNorm = clean;
+  diffs.push(d); if (diffs.length > 20) diffs.shift();
+  if (diffs.length < 10) return null;
+  const rms = new Array(SUB);
+  for (let i = 0; i < SUB; i++) { let q = 0; for (const dd of diffs) q += dd[i] * dd[i]; rms[i] = Math.sqrt(q / diffs.length); }
+  rms.sort((p, q) => p - q);
+  return rms[SUB >> 1] * 100;
+}
+
+function onScore(score) {
+  if (calibSamples) calibSamples.push(score);
+  const thr = limit ? limit / sens : 0;
+  // Moving = at least 6 of the last 10 scores (~0.5 s) above the threshold
+  recent.push(score); if (recent.length > 10) recent.shift();
+  const moving = !!thr && recent.filter(v => v > thr).length >= 6;
+  push(jitter, score); push(thresh, thr); push(movingFlags, moving);
+  if (calibrating) return;
+  if (!limit) { setState('', 'Not calibrated', 'Press Calibrate while the room is still.'); return; }
+  if (moving) {
+    if (Date.now() - lastMoveAt > 3000) countEvent();   // new event after 3 s of quiet
+    lastMoveAt = Date.now();
+  }
+  if (Date.now() - lastMoveAt < 2000) setState('moving', 'Movement detected', 'Someone is moving near the signal path.');
+  else setState('still', 'All still', 'No movement detected.');
+}
+
+es.addEventListener('csi', e => {
+  const d = JSON.parse(e.data);
+  csiCount++;
+  $('rssi').innerHTML = `${d.rssi}<small>dBm</small>`;
+  addColumn(d.amps);
+  const sc = motionScore(d.amps);
+  if (sc != null) onScore(sc);
+});
+
+es.addEventListener('log', e => {
+  const { line } = JSON.parse(e.data); log(line);
+  if (/got ip/i.test(line)) note(limit ? 'Board is online.' : 'Board is online. Now press Calibrate and stay still.');
+});
+
+// ---------- Tickers ----------
+function ago(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 5) return 'Now';
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  return Math.round(s / 3600) + 'h ago';
+}
+setInterval(() => {
+  $('rate').innerHTML = `${csiCount}<small>/s</small>`; csiCount = 0;
+  $('lastMove').textContent = lastMoveAt ? ago(Date.now() - lastMoveAt) : 'None';
+  const m = minuteNow();
+  if (Date.now() - lastMoveAt < 1000) bins[m] = Math.min(60, (bins[m] || 0) + 1);
+  for (const k in bins) if (+k < m - 59) delete bins[k];
+  store.set('wsense.bins', JSON.stringify(bins));
+  drawAct();
+}, 1000);
+
+// ---------- Activity check: walking, sitting and so on ----------
+const ACTS = [
+  { id: 'walk',  name: 'Walking' },
+  { id: 'sit',   name: 'Sitting (small movements)' },
+  { id: 'stand', name: 'Standing still' },
+  { id: 'wave',  name: 'Waving arms' },
+  { id: 'none',  name: 'Nobody here' },
+];
+const actName = id => ACTS.find(a => a.id === id)?.name || id;
+for (const a of ACTS) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.name; $('actPick').appendChild(o); }
+
+// Features over the last ~2 s of motion scores: average, peak, spread, share above threshold, rhythm
+function actFeature() {
+  const w = jitter.slice(-40);
+  if (w.length < 30) return null;
+  const srt = [...w].sort((a, b) => a - b);
+  const mean = w.reduce((a, b) => a + b, 0) / w.length;
+  const sd = Math.sqrt(w.reduce((a, b) => a + (b - mean) ** 2, 0) / w.length);
+  const thr = limit ? limit / sens : srt[Math.floor(w.length * 0.5)] || 1;
+  let cross = 0; for (let i = 1; i < w.length; i++) if ((w[i] - mean) * (w[i - 1] - mean) < 0) cross++;
+  return [Math.log1p(mean), Math.log1p(srt[Math.floor(w.length * 0.9)]), Math.log1p(sd),
+          w.filter(v => v > thr).length / w.length, cross / w.length];
+}
+
+let actData; try { actData = JSON.parse(store.get('wsense.acts') || '{}') || {}; } catch { actData = {}; }
+let actRec = null;
+const actVotes = [];
+function trainedActs() { return Object.keys(actData).filter(k => actData[k]?.length); }
+function renderActChips() {
+  const c = $('actChips'); c.textContent = '';
+  for (const a of ACTS) if (actData[a.id]?.length) {
+    const sp = document.createElement('span'); sp.innerHTML = `${a.name} <b>${actData[a.id].length}</b>`; c.appendChild(sp);
+  }
+  $('actMode').textContent = trainedActs().length >= 2 ? 'Learned from your recordings' : 'Estimate';
+}
+renderActChips();
+
+$('actRec').addEventListener('click', () => {
+  if (actRec) return;
+  if (!limit) { $('actHint').textContent = 'Calibrate first, then record activities.'; return; }
+  const id = $('actPick').value;
+  actData[id] = []; actRec = { id, until: Date.now() + 20000 };
+  $('actRec').disabled = true;
+});
+$('actClear').addEventListener('click', () => { actData = {}; store.set('wsense.acts', '{}'); renderActChips(); });
+
+function classifyAct(f) {
+  const ids = trainedActs(), all = [];
+  for (const id of ids) for (const smp of actData[id]) all.push([smp, id]);
+  const dims = f.length, mu = new Array(dims).fill(0), sd = new Array(dims).fill(0);
+  for (const [smp] of all) for (let i = 0; i < dims; i++) mu[i] += smp[i] / all.length;
+  for (const [smp] of all) for (let i = 0; i < dims; i++) sd[i] += (smp[i] - mu[i]) ** 2 / all.length;
+  for (let i = 0; i < dims; i++) sd[i] = Math.sqrt(sd[i]) || 1;
+  const dist = all.map(([smp, id]) => [smp.reduce((acc, v, i) => acc + ((v - f[i]) / sd[i]) ** 2, 0), id]);
+  dist.sort((a, b) => a[0] - b[0]);
+  const k = Math.min(7, dist.length), tally = {};
+  for (let i = 0; i < k; i++) tally[dist[i][1]] = (tally[dist[i][1]] || 0) + 1;
+  return Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+setInterval(() => {
+  const f = actFeature();
+  if (actRec) {
+    if (f) actData[actRec.id].push(f);
+    const left = Math.ceil((actRec.until - Date.now()) / 1000);
+    $('actHint').textContent = `Recording "${actName(actRec.id)}": keep going, ${left}s left.`;
+    if (left <= 0) {
+      store.set('wsense.acts', JSON.stringify(actData));
+      $('actHint').textContent = `Saved ${actData[actRec.id].length} samples of "${actName(actRec.id)}". Record another activity.`;
+      actRec = null; $('actRec').disabled = false; renderActChips();
+    }
+    return;
+  }
+  if (!f) return;
+  if (!limit) { $('actName').textContent = 'Not calibrated'; $('actWhy').textContent = 'Press Calibrate first.'; return; }
+  if (trainedActs().length >= 2) {
+    actVotes.push(classifyAct(f)); if (actVotes.length > 5) actVotes.shift();
+    const tally = {}; for (const v of actVotes) tally[v] = (tally[v] || 0) + 1;
+    const [top, n] = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+    $('actName').textContent = actName(top);
+    $('actWhy').textContent = `Matched your recordings in ${n} of the last ${actVotes.length} checks.`;
+  } else {
+    // Untrained estimate from movement strength alone
+    const thr = limit / sens, share = f[3], mean = Math.expm1(f[0]);
+    let label = 'Still', why = 'Little or no movement in the signal.';
+    if (share >= 0.3 && mean > thr * 2.5) { label = 'Walking'; why = 'Strong, sustained movement.'; }
+    else if (share >= 0.3) { label = 'Small movements'; why = 'Like sitting, typing or gestures.'; }
+    $('actName').textContent = label;
+    $('actWhy').textContent = why + ' Record activities below for a better guess.';
+  }
+}, 500);
+
+(function loop() { drawMove(); requestAnimationFrame(loop); })();
+window.addEventListener('resize', drawAct);
+</script>
+</body>
+</html>

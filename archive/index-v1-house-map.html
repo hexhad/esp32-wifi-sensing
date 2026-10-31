@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WiFi Sensing</title>
+<style>
+  :root {
+    --bg: #0b0e13; --panel: #131821; --line: #222a36; --text: #e6ebf2; --muted: #8592a6;
+    --empty: #4b5567; --present: #3b82f6; --moving: #22c55e; --warn: #f59e0b; --bad: #ef4444;
+    --chart-a: #38bdf8; --chart-thr: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .conn { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .dot.ok { background: var(--moving); box-shadow: 0 0 8px var(--moving); }
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+  .card h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+             color: var(--muted); margin: 0 0 12px; }
+  .span2 { grid-column: 1 / -1; }
+
+  .status { display: flex; align-items: center; gap: 18px; }
+  .orb { width: 72px; height: 72px; border-radius: 50%; flex: none; background: var(--empty);
+         transition: background .3s, box-shadow .3s; position: relative; }
+  .orb.present { background: var(--present); box-shadow: 0 0 30px -4px var(--present); }
+  .orb.moving { background: var(--moving); box-shadow: 0 0 40px -2px var(--moving); }
+  .orb.moving::after { content: ""; position: absolute; inset: -8px; border-radius: 50%;
+         border: 2px solid var(--moving); animation: ping 1.2s ease-out infinite; }
+  @keyframes ping { from { transform: scale(.85); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .orb.moving::after { animation: none; } }
+  .state { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .stats { display: flex; gap: 22px; margin-top: 14px; flex-wrap: wrap; }
+  .stat b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input { width: 100%; background: #0e131b; border: 1px solid var(--line); color: var(--text);
+          border-radius: 8px; padding: 9px 10px; font: inherit; margin-bottom: 10px; }
+  input:focus { outline: none; border-color: var(--present); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { background: #1d2532; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+           padding: 9px 14px; font: inherit; font-weight: 550; cursor: pointer; }
+  button:hover { background: #253042; }
+  button.primary { background: var(--present); border-color: var(--present); color: #fff; }
+  button.primary:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+  canvas { width: 100%; display: block; border-radius: 6px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
+  pre { margin: 0; max-height: 180px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace;
+        color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+  .house { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 760px) { .house { grid-template-columns: 1fr; } }
+  #plan { width: 100%; height: auto; display: block; background: #0e131b; border-radius: 8px; }
+  #plan .room { fill: #151c27; transition: fill .45s cubic-bezier(.16, 1, .3, 1); }
+  #plan .room.active { fill: rgba(34, 197, 94, .28); }
+  #plan .walls { fill: none; stroke: #c3ccd8; stroke-width: 9; stroke-linecap: square; stroke-linejoin: miter; }
+  #plan .tread { stroke: #2a3442; stroke-width: 2; }
+  #plan .rlabel { fill: #8592a6; font: 600 19px -apple-system, Segoe UI, sans-serif; letter-spacing: .08em; text-anchor: middle; }
+  #plan .room.active + .rlabel, #plan .rlabel.active { fill: #e6ebf2; }
+  #plan .zone { fill: var(--present); opacity: .1; transition: opacity .3s, fill .3s; }
+  #plan .zone.moving { fill: var(--moving); opacity: .32; }
+  #plan .link { stroke: #38bdf8; stroke-width: 2.5; stroke-dasharray: 8 8; opacity: .7; }
+  #plan .dev { font: 700 17px -apple-system, Segoe UI, sans-serif; text-anchor: middle; }
+  #plan .pulse { fill: none; stroke: var(--moving); stroke-width: 4; opacity: 0; transform-box: fill-box; transform-origin: center; }
+  #plan .pulse.on { animation: ring 1.4s ease-out infinite; }
+  @keyframes ring { from { transform: scale(.4); opacity: .9; } to { transform: scale(1.6); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { #plan .pulse.on { animation: none; opacity: .8; } }
+  .counts { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 12px 14px; background: #0e131b; border: 1px solid var(--line); border-radius: 8px; }
+  .counts b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .counts span { color: var(--muted); font-size: 12px; }
+  #plan .badge rect { fill: #22c55e; }
+  #plan .badge.pathb rect { fill: #0ea5e9; }
+  #plan .badge text { fill: #06210f; font: 800 20px -apple-system, Segoe UI, sans-serif; text-anchor: middle; }
+  #plan .badge.pathb text { fill: #04212e; }
+  #plan .badge { transform-box: fill-box; transform-origin: center; transition: opacity .25s; }
+  #plan .badge.zero { opacity: 0; }
+  #plan .badge.pop { animation: pop .45s cubic-bezier(.34, 1.56, .64, 1); }
+  @keyframes pop { from { transform: scale(.6); } to { transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) { #plan .badge.pop { animation: none; } }
+  .housePanel { display: flex; flex-direction: column; gap: 18px; }
+  .where b { display: block; font-size: 24px; font-weight: 650; letter-spacing: -0.02em; margin-top: 2px; }
+  .whereLabel { color: var(--muted); font-size: 12px; }
+  select { width: 100%; background: #0e131b; border: 1px solid var(--line); color: var(--text);
+           border-radius: 8px; padding: 9px 10px; font: inherit; margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips span { font-size: 12px; padding: 4px 9px; border-radius: 8px; background: #1a2230; color: var(--muted); }
+  .chips span b { color: var(--text); font-weight: 600; }
+  .head3d { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .head3d h2 { margin: 0; }
+  .seg { display: inline-flex; background: #0e131b; border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; font-size: 13px; color: var(--muted); }
+  .seg button.on { background: #253042; color: var(--text); }
+  #scene3d { height: 420px; border-radius: 8px; overflow: hidden; background: #0e131b; position: relative;
+             display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  #scene3d canvas { position: absolute; inset: 0; border-radius: 0; touch-action: none; }
+  @media (max-width: 760px) { #scene3d { height: 320px; } }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; text-transform: uppercase;
+                    letter-spacing: .06em; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>WiFi Sensing · ESP32</h1>
+    <div class="conn"><span id="dot" class="dot"></span><span id="connText">Connecting…</span></div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Room status</h2>
+      <div class="status">
+        <div id="orb" class="orb"></div>
+        <div>
+          <div id="state" class="state">Waiting for board</div>
+          <div id="stateSub" class="sub">Connect the board to WiFi, then calibrate.</div>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b id="rssi">-</b><span>Signal (dBm)</span></div>
+        <div class="stat"><b id="rate">-</b><span>Updates / s</span></div>
+        <div class="stat"><b id="lastMove">-</b><span>Last movement</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Setup</h2>
+      <form id="wifiForm" autocomplete="off">
+        <label for="ssid">WiFi name</label>
+        <input id="ssid" required>
+        <label for="pass">Password</label>
+        <input id="pass" type="password">
+        <div class="row">
+          <button class="primary" type="submit">Connect board</button>
+          <button type="button" id="calib">Calibrate (stay still)</button>
+        </div>
+      </form>
+      <label for="sens" style="margin-top:14px">Sensitivity: <span id="sensVal">1.0×</span></label>
+      <input id="sens" type="range" min="0.4" max="2.5" step="0.1" value="1" style="padding:0">
+
+      <div id="setupHint" class="hint">Your password goes only to the board over USB, never online.</div>
+    </div>
+
+    <div class="card span2">
+      <h2>House map</h2>
+      <div class="house">
+        <svg id="plan" viewBox="-60 -50 930 1065" role="img" aria-label="Floor plan with router and ESP32"></svg>
+        <div class="housePanel">
+          <div class="where">
+            <span class="whereLabel">Movement location</span>
+            <b id="roomName">No movement</b>
+            <span id="roomConf" class="sub">Train rooms below to enable room guesses.</span>
+          </div>
+          <div class="counts">
+            <div><b id="evTotal">0</b><span>Movement events today</span></div>
+            <button type="button" id="resetCounts">Reset counts</button>
+          </div>
+          <div class="train">
+            <label for="trainRoom">Teach a room</label>
+            <select id="trainRoom"></select>
+            <div class="row">
+              <button type="button" class="primary" id="recBtn">Record 20 s</button>
+              <button type="button" id="clearBtn">Clear all</button>
+            </div>
+            <div id="recHint" class="hint">Walk around inside the chosen room while it records. Do every room, plus "Nobody moving".</div>
+            <div id="trained" class="chips"></div>
+          </div>
+          <p class="hint">One router and one ESP32 form a single signal path, so this is a learned guess, not exact positioning. Rooms near the dashed line work best.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card span2">
+      <div class="head3d">
+        <h2>3D view</h2>
+        <div class="seg" role="tablist">
+          <button type="button" data-mode="terrain" class="on">Signal terrain</button>
+          <button type="button" data-mode="room">House</button>
+        </div>
+      </div>
+      <div id="scene3d"><span id="scene3dMsg">Loading 3D…</span></div>
+      <div id="hint3d" class="hint">Each ridge is one WiFi frequency; newest data at the front. Drag to rotate, scroll to zoom.</div>
+    </div>
+
+    <div class="card span2">
+      <h2>Movement</h2>
+      <canvas id="moveChart" height="140"></canvas>
+      <div class="legend"><span><i style="background:var(--chart-a)"></i>Signal jitter</span>
+        <span><i style="background:var(--chart-thr)"></i>Movement threshold</span></div>
+    </div>
+
+    <div class="card span2">
+      <h2>Raw WiFi signal (CSI): subcarriers over time</h2>
+      <canvas id="waterfall" height="180"></canvas>
+      <div class="hint">Each row is one WiFi frequency (subcarrier). Bands of colour shift when someone moves through the signal.</div>
+    </div>
+
+    <div class="card span2">
+      <h2>Presence</h2>
+      <canvas id="presChart" height="110"></canvas>
+      <div class="legend"><span><i style="background:var(--chart-a)"></i>Signal drift</span>
+        <span><i style="background:var(--chart-thr)"></i>Presence threshold</span></div>
+    </div>
+
+    <div class="card span2">
+      <details><summary>Board console</summary><pre id="log"></pre></details>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+window.wsense = { csi: [], radar: null, room: null }; // shared with the 3D module
+
+// House geometry traced from the floor plan image (plan units, origin top-left, not to scale)
+window.HOUSE = {
+  outer: [[0,0,810,0],[810,0,810,965],[810,965,110,965],[110,965,110,715],[110,600,110,585],[110,585,0,585],[0,585,0,0]],
+  walls: [[305,0,305,272],[0,375,305,375],[0,585,305,585],[580,375,595,375],[655,375,810,375],
+          [580,375,580,585],[530,585,810,585],[530,690,530,965]],
+  rooms: [
+    { id: 'bed1',   name: 'Bedroom 1',       r: [0,0,305,375] },
+    { id: 'dining', name: 'Pantry & dining', r: [305,0,505,375] },
+    { id: 'stairs', name: 'Stairs',          r: [0,375,305,210] },
+    { id: 'hall',   name: 'Hallway',         r: [305,375,275,210] },
+    { id: 'bath',   name: 'Bathroom',        r: [580,375,230,210] },
+    { id: 'living', name: 'Living',          r: [110,585,420,380] },
+    { id: 'bed2',   name: 'Bedroom 2',       r: [530,585,280,380] },
+  ],
+  router: [565, 90],
+  esp: [423, 445],
+};
+const N = 300;
+const move = [], moveThr = [], pres = [], presThr = [];
+let lastMoveAt = 0, csiCount = 0, calibrating = false;
+
+function send(cmd) {
+  return fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ cmd }) });
+}
+
+$('wifiForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = s => '"' + s.replace(/"/g, '') + '"';
+  const cmd = 'wifi_config -s ' + q($('ssid').value) + ($('pass').value ? ' -p ' + q($('pass').value) : '');
+  send(cmd).then(r => $('setupHint').textContent = r.ok
+    ? 'Sent. Watch the console below for "got ip".' : 'Could not reach the board.');
+  $('pass').value = '';
+});
+
+// Movement detection runs here, against a limit learned from your still room.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+let limit = parseFloat(store.get('wsense.limit')) || 0;
+let sens = parseFloat(store.get('wsense.sens')) || 1;
+let calibSamples = null;
+const recent = [];
+$('sens').value = sens; $('sensVal').textContent = sens.toFixed(1) + '×';
+$('sens').addEventListener('input', e => {
+  sens = +e.target.value; $('sensVal').textContent = sens.toFixed(1) + '×'; store.set('wsense.sens', sens);
+});
+
+$('calib').addEventListener('click', async () => {
+  if (calibrating) return;
+  calibrating = true; $('calib').disabled = true;
+  calibSamples = [];
+  for (let s = 15; s > 0; s--) {
+    $('setupHint').textContent = `Calibrating… stay completely still (or leave the room): ${s}s`;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  const v = calibSamples.sort((a, b) => a - b); calibSamples = null;
+  if (v.length < 20) {
+    $('setupHint').textContent = 'Not enough data. Is the board connected to WiFi? Try again.';
+  } else {
+    // Quietest-room noise ceiling, with headroom so normal flicker doesn't trigger
+    limit = Math.max(v[Math.floor(v.length * 0.97)] * 1.4, 1e-4);
+    store.set('wsense.limit', limit);
+    $('setupHint').textContent = `Calibrated from ${v.length} readings. Walk around to test; use the slider if it's too jumpy or too quiet.`;
+  }
+  calibrating = false; $('calib').disabled = false;
+});
+
+function push(arr, v) { arr.push(v); if (arr.length > N) arr.shift(); }
+
+function setupCanvas(c) {
+  // Remember the CSS height once: setting c.height below changes the attribute,
+  // and reading it back on a Retina screen would double the chart every resize
+  const h = +(c.dataset.h ||= c.getAttribute('height'));
+  c.style.height = h + 'px';
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  }
+  const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [ctx, w, h];
+}
+
+function drawLines(c, series) {
+  const [ctx, w, h] = setupCanvas(c);
+  ctx.clearRect(0, 0, w, h);
+  let max = 1e-6;
+  for (const s of series) for (const v of s.data) if (v > max) max = v;
+  max *= 1.15;
+  ctx.strokeStyle = '#1c2430'; ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) { const y = h * i / 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  for (const s of series) {
+    if (!s.data.length) continue;
+    ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6; ctx.setLineDash(s.dash || []);
+    ctx.beginPath();
+    s.data.forEach((v, i) => {
+      const x = w - (s.data.length - 1 - i) * (w / (N - 1)), y = h - (v / max) * h;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+const css = getComputedStyle(document.documentElement);
+function redraw() {
+  drawLines($('moveChart'), [
+    { data: moveThr, color: css.getPropertyValue('--chart-thr'), dash: [4, 4], width: 1.2 },
+    { data: move, color: css.getPropertyValue('--chart-a') }]);
+  drawLines($('presChart'), [
+    { data: presThr, color: css.getPropertyValue('--chart-thr'), dash: [4, 4], width: 1.2 },
+    { data: pres, color: css.getPropertyValue('--chart-a') }]);
+}
+
+// Waterfall: scroll left by one column per CSI frame
+const wf = $('waterfall');
+function wfColor(t) { // dark blue -> cyan -> yellow
+  t = Math.max(0, Math.min(1, t));
+  const r = Math.round(255 * Math.max(0, (t - 0.5) * 2));
+  const g = Math.round(255 * Math.min(1, t * 1.6));
+  const b = Math.round(255 * (1 - t) * 0.9 + 40);
+  return [r, g, b];
+}
+let wfMax = 30;
+function addColumn(amps) {
+  const [ctx, w, h] = setupCanvas(wf);
+  const dpr = window.devicePixelRatio || 1, colW = 3;
+  const img = ctx.getImageData(colW * dpr, 0, wf.width - colW * dpr, wf.height);
+  ctx.putImageData(img, 0, 0);
+  const peak = Math.max(...amps); wfMax = wfMax * 0.98 + peak * 0.02;
+  const rowH = h / amps.length;
+  amps.forEach((a, i) => {
+    const [r, g, b] = wfColor(a / (wfMax || 1));
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(w - colW, h - (i + 1) * rowH, colW, Math.ceil(rowH));
+  });
+}
+
+function setState(kind, sub) {
+  const labels = { empty: 'Room empty', present: 'Someone present', moving: 'Someone moving', wait: 'Waiting for board' };
+  $('orb').className = 'orb ' + (kind === 'wait' ? '' : kind);
+  $('state').textContent = labels[kind];
+  if (sub) $('stateSub').textContent = sub;
+}
+
+const logEl = $('log');
+function log(line) {
+  logEl.textContent += line + '\n';
+  if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+const es = new EventSource('/events');
+es.addEventListener('status', e => {
+  const d = JSON.parse(e.data), ok = d.serial === 'connected';
+  $('dot').className = 'dot' + (ok ? ' ok' : '');
+  $('connText').textContent = ok ? 'Board connected' : (d.error ? 'Board unplugged' : 'Waiting for board');
+});
+es.onerror = () => { $('dot').className = 'dot'; $('connText').textContent = 'Server stopped'; };
+
+es.addEventListener('radar', e => {
+  const d = JSON.parse(e.data);
+  if (calibSamples) calibSamples.push(d.jitter);
+  const thr = limit ? limit / sens : 0;
+  // Moving = at least 3 of the last 6 readings above the limit (ignores single spikes)
+  recent.push(d.jitter); if (recent.length > 6) recent.shift();
+  const moving = !!thr && recent.filter(v => v > thr).length >= 3;
+  window.wsense.radar = { ...d, moveThr: thr || d.jitter * 2, moving };
+  push(move, d.jitter); push(moveThr, thr);
+  push(pres, d.wander); push(presThr, d.someoneThr);
+  if (calibrating) return;
+  if (!limit) { setState('wait', 'Receiving data. Press Calibrate while the room is still.'); $('state').textContent = 'Not calibrated'; return; }
+  if (moving) {
+    if (Date.now() - lastMoveAt > 3000) countEvent(); // new event after 3 s of quiet
+    lastMoveAt = Date.now();
+  }
+  if (Date.now() - lastMoveAt < 2000) setState('moving', 'Movement detected in the WiFi signal.');
+  else if (d.someone) setState('present', 'Signal suggests someone is nearby but still.');
+  else setState('empty', 'No movement detected.');
+});
+
+es.addEventListener('csi', e => {
+  const d = JSON.parse(e.data);
+  csiCount++; $('rssi').textContent = d.rssi;
+  addColumn(d.amps);
+  onCsiFrame(d.amps);
+  const q = window.wsense.csi; q.push(d.amps); if (q.length > 40) q.shift();
+});
+
+es.addEventListener('log', e => {
+  const { line } = JSON.parse(e.data); log(line);
+  if (/got ip/i.test(line)) {
+    send('radar --csi_output_type LLTF'); // raw signal output is off by default
+    $('setupHint').textContent = 'Board is on WiFi. Now press Calibrate and stay still.';
+  }
+});
+
+setInterval(() => {
+  $('rate').textContent = csiCount; csiCount = 0;
+  $('lastMove').textContent = lastMoveAt ? Math.round((Date.now() - lastMoveAt) / 1000) + 's ago' : '-';
+}, 1000);
+
+(function loop() { redraw(); requestAnimationFrame(loop); })();
+
+// ---------- House map (SVG) ----------
+const H = window.HOUSE, NS = 'http://www.w3.org/2000/svg';
+const plan = $('plan');
+function el(tag, attrs, parent = plan) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent.appendChild(n); return n;
+}
+const roomEls = {}, labelEls = {}, pulseEls = {};
+for (const rm of H.rooms) {
+  const [x, y, w, h] = rm.r;
+  roomEls[rm.id] = el('rect', { x, y, width: w, height: h, class: 'room' });
+  if (rm.id === 'stairs') for (let tx = 25; tx < w - 10; tx += 24) el('line', { x1: x + tx, y1: y + 22, x2: x + tx, y2: y + h - 22, class: 'tread' });
+}
+for (const rm of H.rooms) {
+  const [x, y, w, h] = rm.r, cx = x + w / 2, cy = y + h / 2;
+  pulseEls[rm.id] = el('circle', { cx, cy, r: Math.min(w, h) * 0.3, class: 'pulse' });
+  const t = el('text', { x: cx, y: rm.id === 'dining' ? y + h - 40 : rm.id === 'hall' ? y + h - 22 : cy + 6, class: 'rlabel' });
+  t.textContent = rm.name.toUpperCase(); labelEls[rm.id] = t;
+}
+el('path', { class: 'walls', d: [...H.outer, ...H.walls].map(([a, b, c, d]) => `M${a} ${b}L${c} ${d}`).join('') });
+const [rx, ry] = H.router, [ex, ey] = H.esp;
+const mx = (rx + ex) / 2, my = (ry + ey) / 2, half = Math.hypot(ex - rx, ey - ry) / 2;
+const ang = Math.atan2(ey - ry, ex - rx) * 180 / Math.PI;
+const zoneEl = el('ellipse', { cx: mx, cy: my, rx: half + 20, ry: 46, transform: `rotate(${ang} ${mx} ${my})`, class: 'zone' });
+el('line', { x1: rx, y1: ry, x2: ex, y2: ey, class: 'link' });
+el('rect', { x: rx - 26, y: ry - 16, width: 52, height: 32, rx: 6, fill: '#ef4444' });
+el('text', { x: rx, y: ry + 42, class: 'dev', fill: '#fca5a5' }).textContent = 'ROUTER';
+el('rect', { x: ex - 20, y: ey - 20, width: 40, height: 40, rx: 6, fill: '#3b82f6' });
+el('text', { x: ex, y: ey + 46, class: 'dev', fill: '#93c5fd' }).textContent = 'ESP32';
+el('text', { x: 55, y: 650, class: 'rlabel', 'font-size': 15 }).textContent = 'ENTRANCE';
+el('path', { d: 'M40 662 L98 662 M88 654 L98 662 L88 670', stroke: '#8592a6', 'stroke-width': 3, fill: 'none' });
+
+// ---------- Movement counts ----------
+function makeBadge(x, y, cls) {
+  const g = el('g', { class: 'badge zero ' + cls });
+  const r = el('rect', { x: x - 22, y: y - 17, width: 44, height: 34, rx: 17 }, g);
+  const t = el('text', { x, y: y + 7 }, g);
+  t.textContent = '0';
+  return { g, r, t, x };
+}
+const badges = {};
+// Each room's count sits next to its name; the path count sits on the dashed line
+for (const rm of H.rooms) {
+  const t = labelEls[rm.id], lx = +t.getAttribute('x'), ly = +t.getAttribute('y');
+  const half = t.getComputedTextLength() / 2;
+  const pos = rm.id === 'dining' ? [lx, ly - 44]
+            : rm.id === 'hall' ? [lx + half + 34, ly - 7]
+            : [lx, ly + 34];
+  badges[rm.id] = makeBadge(pos[0], pos[1], 'room');
+}
+badges.link = makeBadge(mx, my, 'pathb');
+
+const today = () => new Date().toDateString();
+let counts; try { counts = JSON.parse(store.get('wsense.counts') || 'null'); } catch { counts = null; }
+if (!counts || counts.date !== today()) counts = { date: today(), link: 0, rooms: {} };
+let eventRoomCounted = false;
+
+function drawBadge(key, n, pop) {
+  const b = badges[key]; if (!b) return;
+  b.t.textContent = n;
+  const w = Math.max(44, 22 + String(n).length * 13);
+  b.r.setAttribute('width', w); b.r.setAttribute('x', b.x - w / 2);
+  b.g.classList.toggle('zero', !n);
+  if (pop) { b.g.classList.remove('pop'); void b.g.getBBox(); b.g.classList.add('pop'); }
+}
+function drawCounts() {
+  drawBadge('link', counts.link);
+  for (const rm of H.rooms) drawBadge(rm.id, counts.rooms[rm.id] || 0);
+  $('evTotal').textContent = counts.link;
+}
+function save() { store.set('wsense.counts', JSON.stringify(counts)); }
+function countEvent() {
+  if (counts.date !== today()) counts = { date: today(), link: 0, rooms: {} };
+  counts.link++; eventRoomCounted = false;
+  save(); drawCounts(); drawBadge('link', counts.link, true);
+}
+function bump(id) {
+  counts.rooms[id] = (counts.rooms[id] || 0) + 1;
+  save(); drawBadge(id, counts.rooms[id], true);
+}
+$('resetCounts').addEventListener('click', () => { counts = { date: today(), link: 0, rooms: {} }; save(); drawCounts(); });
+drawCounts();
+
+// ---------- Room fingerprints: learn what movement in each room does to the signal ----------
+const TRAIN_ROOMS = [...H.rooms.map(r => ({ id: r.id, name: r.name })), { id: 'none', name: 'Nobody moving' }];
+const nameOf = id => TRAIN_ROOMS.find(r => r.id === id)?.name || id;
+for (const r of TRAIN_ROOMS) { const o = document.createElement('option'); o.value = r.id; o.textContent = r.name; $('trainRoom').appendChild(o); }
+
+const BANDS = 32, frames = [];
+function onCsiFrame(amps) {
+  const b = new Float32Array(BANDS);
+  for (let i = 0; i < BANDS; i++) b[i] = amps[Math.floor(i * amps.length / BANDS)] || 0;
+  frames.push(b); if (frames.length > 20) frames.shift();
+}
+// Feature = how much each frequency band wobbles over the last ~1 s, plus overall jitter
+function feature() {
+  if (frames.length < 10) return null;
+  const f = [];
+  for (let i = 0; i < BANDS; i++) {
+    let m = 0; for (const fr of frames) m += fr[i]; m /= frames.length;
+    let v = 0; for (const fr of frames) v += (fr[i] - m) ** 2;
+    f.push(Math.log1p(Math.sqrt(v / frames.length) / (m + 1) * 50));
+  }
+  f.push(Math.log1p((window.wsense.radar?.jitter || 0) * 1000) * 2);
+  return f;
+}
+
+let fp = {}; try { fp = JSON.parse(store.get('wsense.fp') || '{}') || {}; } catch { fp = {}; }
+let rec = null;
+function renderChips() {
+  const c = $('trained'); c.textContent = '';
+  for (const r of TRAIN_ROOMS) if (fp[r.id]?.length) {
+    const s = document.createElement('span'); s.innerHTML = `${r.name} <b>${fp[r.id].length}</b>`; c.appendChild(s);
+  }
+}
+renderChips();
+
+$('recBtn').addEventListener('click', () => {
+  if (rec) return;
+  if (!frames.length) { $('recHint').textContent = 'No signal data yet. Connect the board to WiFi first.'; return; }
+  const id = $('trainRoom').value;
+  fp[id] = []; rec = { id, until: Date.now() + 20000 };
+  $('recBtn').disabled = true;
+});
+$('clearBtn').addEventListener('click', () => { fp = {}; store.set('wsense.fp', '{}'); renderChips(); setRoom(null); });
+
+const votes = [];
+function setRoom(id, info) {
+  window.wsense.room = id && id !== 'none' ? id : null;
+  if (window.wsense.room && !eventRoomCounted && Date.now() - lastMoveAt < 2000) {
+    eventRoomCounted = true; bump(window.wsense.room);
+  }
+  for (const k in roomEls) {
+    const on = k === window.wsense.room;
+    roomEls[k].classList.toggle('active', on); labelEls[k].classList.toggle('active', on);
+    pulseEls[k].classList.toggle('on', on);
+  }
+  const moving = Date.now() - lastMoveAt < 2000;
+  zoneEl.classList.toggle('moving', moving);
+  const trained = Object.keys(fp).filter(k => fp[k].length).length;
+  if (!moving) { $('roomName').textContent = 'No movement'; }
+  else if (window.wsense.room) { $('roomName').textContent = nameOf(window.wsense.room); }
+  else { $('roomName').textContent = trained >= 2 ? 'Unsure' : 'Movement detected'; }
+  $('roomConf').textContent = info || (trained >= 2 ? 'Room guess is active.' : 'Train at least 2 rooms to enable room guesses.');
+}
+
+function classify(f) {
+  const all = [];
+  for (const id in fp) for (const s of fp[id]) {
+    let d = 0; for (let i = 0; i < f.length; i++) d += (f[i] - s[i]) ** 2;
+    all.push([d, id]);
+  }
+  all.sort((a, b) => a[0] - b[0]);
+  const k = Math.min(7, all.length), count = {};
+  for (let i = 0; i < k; i++) count[all[i][1]] = (count[all[i][1]] || 0) + 1;
+  const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+  return { id: best[0], conf: best[1] / k };
+}
+
+setInterval(() => {
+  const f = feature();
+  if (rec) {
+    if (f) fp[rec.id].push(f);
+    const left = Math.ceil((rec.until - Date.now()) / 1000);
+    $('recHint').textContent = `Recording ${nameOf(rec.id)}: keep walking around in it, ${left}s`;
+    if (left <= 0) {
+      store.set('wsense.fp', JSON.stringify(fp));
+      $('recHint').textContent = `Saved ${fp[rec.id].length} samples for ${nameOf(rec.id)}. Pick the next room.`;
+      rec = null; $('recBtn').disabled = false; renderChips();
+    }
+    return;
+  }
+  const trained = Object.keys(fp).filter(k => fp[k].length).length;
+  const moving = Date.now() - lastMoveAt < 2000;
+  if (!f || trained < 2 || !moving) { votes.length = 0; setRoom(null); return; }
+  const g = classify(f);
+  votes.push(g.id); if (votes.length > 5) votes.shift();
+  const tally = {}; for (const v of votes) tally[v] = (tally[v] || 0) + 1;
+  const [top, n] = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+  if (n >= 3 && top !== 'none') setRoom(top, `Matches ${nameOf(top)} in ${n} of the last ${votes.length} checks.`);
+  else setRoom(null, 'Signal does not clearly match one trained room.');
+}, 500);
+</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const host = document.getElementById('scene3d');
+document.getElementById('scene3dMsg').remove();
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e131b);
+scene.fog = new THREE.Fog(0x0e131b, 18, 40);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.autoRotate = false;
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 1.3);
+sun.position.set(6, 12, 8);
+scene.add(sun);
+
+new ResizeObserver(() => {
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h, false);
+  renderer.domElement.style.width = w + 'px';
+  renderer.domElement.style.height = h + 'px';
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}).observe(host);
+
+function heat(t, out) { // same palette as the 2D waterfall
+  t = Math.max(0, Math.min(1, t));
+  out.setRGB(Math.max(0, (t - 0.5) * 2), Math.min(1, t * 1.6), (1 - t) * 0.9 + 0.16);
+  return out;
+}
+
+function label(text, color = '#e6ebf2') {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.font = '600 30px -apple-system, Segoe UI, sans-serif';
+  g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 128, 32);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthWrite: false }));
+  s.scale.set(2.4, 0.6, 1);
+  return s;
+}
+
+// ---------- Signal terrain: subcarriers (x) x time (z) x amplitude (y) ----------
+const SC = 64, T = 100, W = 10, D = 12, H = 3;
+const terrain = new THREE.Group();
+const geo = new THREE.PlaneGeometry(W, D, SC - 1, T - 1);
+geo.rotateX(-Math.PI / 2);
+geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(SC * T * 3), 3));
+const surf = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+  vertexColors: true, side: THREE.DoubleSide, roughness: 0.55, metalness: 0.05 }));
+const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+  wireframe: true, color: 0x000000, transparent: true, opacity: 0.18 }));
+terrain.add(surf, mesh);
+const tGrid = new THREE.GridHelper(14, 14, 0x2a3442, 0x18202a); tGrid.position.y = -0.02;
+terrain.add(tGrid);
+const lf = label('frequency →', '#8592a6'); lf.position.set(0, -0.3, D / 2 + 0.9); terrain.add(lf);
+const lt = label('← time', '#8592a6'); lt.position.set(W / 2 + 1.4, -0.3, 0); terrain.add(lt);
+scene.add(terrain);
+
+const hist = Array.from({ length: T }, () => new Float32Array(SC));
+let ampMax = 30;
+const tmp = new THREE.Color();
+function updateTerrain() {
+  const q = window.wsense.csi;
+  if (!q.length) return;
+  while (q.length) {
+    const a = q.shift(), row = hist.shift();
+    for (let i = 0; i < SC; i++) row[i] = a[Math.floor(i * a.length / SC)] || 0; // resample to 64
+    hist.push(row);
+    let peak = 0; for (let i = 0; i < SC; i++) if (row[i] > peak) peak = row[i];
+    ampMax = ampMax * 0.98 + peak * 0.02;
+  }
+  const pos = geo.attributes.position, col = geo.attributes.color;
+  for (let r = 0; r < T; r++) for (let c = 0; c < SC; c++) {
+    const i = r * SC + c, t = hist[r][c] / (ampMax || 1);
+    pos.setY(i, Math.min(t, 1.6) * H);
+    heat(t, tmp); col.setXYZ(i, tmp.r, tmp.g, tmp.b);
+  }
+  pos.needsUpdate = true; col.needsUpdate = true;
+  geo.computeVertexNormals();
+}
+
+// ---------- House: your floor plan in 3D ----------
+const HOUSE = window.HOUSE, SC3 = 0.016, CX = 405, CY = 482;
+const P3 = (x, y) => [(x - CX) * SC3, (y - CY) * SC3];
+const room = new THREE.Group();
+const WALL_H = 1.3, WALL_T = 0.14;
+const wallMat = new THREE.MeshStandardMaterial({ color: 0xc3ccd8, roughness: 0.85 });
+for (const [x1, y1, x2, y2] of [...HOUSE.outer, ...HOUSE.walls]) {
+  const [ax, az] = P3(x1, y1), [bx, bz] = P3(x2, y2), len = Math.hypot(bx - ax, bz - az);
+  const w = new THREE.Mesh(new THREE.BoxGeometry(len + WALL_T, WALL_H, WALL_T), wallMat);
+  w.position.set((ax + bx) / 2, WALL_H / 2, (az + bz) / 2);
+  w.rotation.y = -Math.atan2(bz - az, bx - ax);
+  room.add(w);
+}
+const floors = {};
+for (const rm of HOUSE.rooms) {
+  const [x, y, w, h] = rm.r, [fx, fz] = P3(x + w / 2, y + h / 2);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w * SC3, h * SC3),
+    new THREE.MeshStandardMaterial({ color: 0x1a2230, emissive: 0x22c55e, emissiveIntensity: 0, roughness: 0.9 }));
+  m.rotation.x = -Math.PI / 2; m.position.set(fx, 0.005, fz);
+  floors[rm.id] = m; room.add(m);
+  const l = label(rm.name, '#8592a6'); l.scale.set(2.2, 0.55, 1); l.position.set(fx, 0.35, fz); room.add(l);
+}
+const box = (w, h, d, color) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+  new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 }));
+const Y = 0.9;
+const [rX, rZ] = P3(...HOUSE.router), [eX, eZ] = P3(...HOUSE.esp);
+const router = box(0.7, 0.16, 0.45, 0xef4444); router.position.set(rX, Y, rZ);
+for (const dx of [-0.25, 0.25]) {
+  const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45), new THREE.MeshStandardMaterial({ color: 0x7f1d1d }));
+  ant.position.set(dx, 0.3, -0.18); router.add(ant);
+}
+const led = new THREE.Mesh(new THREE.SphereGeometry(0.03), new THREE.MeshBasicMaterial({ color: 0x22c55e }));
+led.position.set(0, 0.02, 0.23); router.add(led);
+const esp = box(0.4, 0.07, 0.24, 0x3b82f6); esp.position.set(eX, Y, eZ);
+for (const [m, x, z] of [[router, rX, rZ], [esp, eX, eZ]]) {
+  const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, Y), new THREE.MeshStandardMaterial({ color: 0x2a3442 }));
+  stand.position.set(x, Y / 2, z); room.add(m, stand);
+}
+const lr = label('Router', '#fca5a5'); lr.position.set(rX, Y + 0.85, rZ);
+const le = label('ESP32', '#93c5fd'); le.position.set(eX, Y + 0.6, eZ);
+room.add(lr, le);
+
+// Signal path between router and board, in its own rotated frame (x = along the link)
+const LX = Math.hypot(eX - rX, eZ - rZ) / 2;
+const link = new THREE.Group();
+link.position.set((rX + eX) / 2, Y, (rZ + eZ) / 2);
+link.rotation.y = -Math.atan2(eZ - rZ, eX - rX);
+room.add(link);
+const zoneMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.1,
+  blending: THREE.AdditiveBlending, depthWrite: false });
+const zone = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), zoneMat);
+zone.scale.set(LX, 0.55, 0.55); link.add(zone);
+link.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-LX, 0, 0), new THREE.Vector3(LX, 0, 0)]),
+  new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.4 })));
+const P = 220, pPos = new Float32Array(P * 3), pSeed = [];
+for (let i = 0; i < P; i++) pSeed.push({ x: Math.random(), a: Math.random() * Math.PI * 2, r: Math.sqrt(Math.random()), s: 0.15 + Math.random() * 0.2 });
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const pMat = new THREE.PointsMaterial({ color: 0x38bdf8, size: 0.06, transparent: true, opacity: 0.85,
+  blending: THREE.AdditiveBlending, depthWrite: false });
+link.add(new THREE.Points(pGeo, pMat));
+scene.add(room);
+
+const C_EMPTY = new THREE.Color(0x3b82f6), C_PRES = new THREE.Color(0x6366f1), C_MOVE = new THREE.Color(0x22c55e);
+let level = 0;
+function updateRoom(dt, now) {
+  const d = window.wsense.radar;
+  const target = d ? Math.min(2.5, d.jitter / (d.moveThr || 1e-4)) : 0;
+  level += (target - level) * Math.min(1, dt * 4);
+  const want = d?.moving ? C_MOVE : d?.someone ? C_PRES : C_EMPTY;
+  zoneMat.color.lerp(want, Math.min(1, dt * 3)); pMat.color.lerp(want, Math.min(1, dt * 3));
+  const pulse = reduced ? 0 : Math.sin(now * 0.006) * 0.04 * Math.min(level, 1.5);
+  zoneMat.opacity = 0.07 + Math.min(level, 1.5) * 0.12;
+  zone.scale.set(LX, 0.55 + pulse + level * 0.05, 0.55 + pulse + level * 0.05);
+  led.visible = reduced || Math.floor(now / 400) % 2 === 0;
+  for (const id in floors) {
+    const m = floors[id].material, on = window.wsense.room === id;
+    m.emissiveIntensity += ((on ? 0.45 : 0) - m.emissiveIntensity) * Math.min(1, dt * 5);
+  }
+  const shake = Math.min(level, 2) * 0.25;
+  for (let i = 0; i < P; i++) {
+    const s = pSeed[i];
+    s.x += s.s * dt; if (s.x > 1) s.x -= 1;
+    const x = -LX + s.x * 2 * LX, env = Math.sqrt(Math.max(0, 1 - (x / LX) ** 2)), rr = s.r * env * 0.5;
+    pPos[i * 3] = x;
+    pPos[i * 3 + 1] = Math.sin(s.a) * rr + (Math.random() - 0.5) * shake * env;
+    pPos[i * 3 + 2] = Math.cos(s.a) * rr + (Math.random() - 0.5) * shake * env;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+}
+
+// ---------- mode switch ----------
+const hint = document.getElementById('hint3d');
+const views = {
+  terrain: { cam: [9, 7.5, 11], target: [0, 0.8, 0],
+    hint: 'Each ridge is one WiFi frequency; newest data at the front. Drag to rotate, scroll to zoom.' },
+  room: { cam: [0, 15, 12], target: [0, 0, 0],
+    hint: 'Your house in 3D. The glowing tube is the router to ESP32 signal path; a room floor lights up when the trained room guess picks it.' },
+};
+let mode = 'terrain';
+function setMode(m) {
+  mode = m;
+  terrain.visible = m === 'terrain'; room.visible = m === 'room';
+  camera.position.set(...views[m].cam); controls.target.set(...views[m].target); controls.update();
+  hint.textContent = views[m].hint;
+  document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+}
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+setMode('terrain');
+
+let last = performance.now();
+renderer.setAnimationLoop(now => {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (mode === 'terrain') updateTerrain(); else { window.wsense.csi.length = 0; updateRoom(dt, now); }
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

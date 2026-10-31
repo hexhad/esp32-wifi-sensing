@@ -1,0 +1,15 @@
+diff --git a/examples/esp-radar/console_test/sdkconfig.defaults b/examples/esp-radar/console_test/sdkconfig.defaults
+index 10e8b72..953d479 100644
+--- a/examples/esp-radar/console_test/sdkconfig.defaults
++++ b/examples/esp-radar/console_test/sdkconfig.defaults
+@@ -5,8 +5,8 @@ CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+ CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+ CONFIG_ESPTOOLPY_BAUD_921600B=y
+ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+-CONFIG_ESPTOOLPY_MONITOR_BAUD_2MB=y
+-CONFIG_ESP_CONSOLE_UART_BAUDRATE=2000000
++CONFIG_ESPTOOLPY_MONITOR_BAUD_921600B=y
++CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600
+ 
+ #
+ # Partition Table
